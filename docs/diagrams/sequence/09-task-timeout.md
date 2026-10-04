@@ -31,4 +31,5 @@ sequenceDiagram
 
 ## Notes
 - No retry is scheduled even if attempts remain.
+- Timeout is a deadline on wall-clock time, so a slow server makes it more likely. Encoder presets are chosen with that in mind (see the CPU Management section of the notes).
 - The task_attempts outcome value fatal_error is used because the allowed outcomes are success, retryable_error, fatal_error, lease_expired, canceled, interrupted. The timeout detail lives in error_code and error_message.

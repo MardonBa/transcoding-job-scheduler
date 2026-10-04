@@ -1,7 +1,7 @@
 # Diagrams
 
 UML diagrams for the transcoding job scheduler. Each file has a short description followed by a Mermaid diagram.
-Source of truth for the design is [../IMPLEMENTATION_NOTES.md](../IMPLEMENTATION_NOTES.md). If a diagram and the notes disagree, the notes win and the diagram should be fixed.
+Source of truth for the design is [../IMPLEMENTATION_NOTES.md](../IMPLEMENTATION_NOTES.md). Exact HTTP and event payloads live in [../API.md](../API.md) and [../SSE.md](../SSE.md). If a diagram and the notes disagree, the notes win and the diagram should be fixed.
 
 ## Structural
 
@@ -42,7 +42,7 @@ Happy path
 Failure and edge paths
 - [06 Task failure and retry](sequence/06-task-failure-and-retry.md)
 - [07 Worker crash recovery](sequence/07-worker-crash-recovery.md)
-- [08 Cancel job](sequence/08-cancel-job.md)
+- [08 Cancel job or task](sequence/08-cancel-job.md)
 - [09 Task timeout](sequence/09-task-timeout.md)
 - [10 Download](sequence/10-download.md)
 - [11 Cleanup](sequence/11-cleanup.md)

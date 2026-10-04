@@ -10,6 +10,7 @@ flowchart TB
         direction TB
 
         subgraph Edge["edge network"]
+            NG["nginx - only published port, 80"]
             FE["frontend - Next.js"]
             API["api - Go, healthz and readyz"]
         end
@@ -34,11 +35,10 @@ flowchart TB
         VolSC[("scratch volume per worker")]
     end
 
-    User -->|"HTTP"| FE
-    User -->|"REST and SSE"| API
-    User -->|"presigned PUT and GET"| MN
-
-    FE -->|"REST"| API
+    User -->|"HTTP localhost:80"| NG
+    NG -->|"/"| FE
+    NG -->|"/api REST and SSE"| API
+    NG -->|"/uploads and /outputs presigned POST and GET"| MN
     API --> PG
     API --> RD
     API --> MN
@@ -73,6 +73,8 @@ flowchart TB
 
 ## Notes
 
+- nginx is the only container with a published port (80), plus the MinIO console on 9001 in dev. MinIO sits on both the edge and backend networks so nginx and workers can reach it. See docs/NGINX.md.
+- The frontend fetches client side through nginx, so it has no direct edge to the api.
 - Worker reaches only minio, postgres and redis. It has no route to the api, frontend or the internet.
 - Worker scratch space at /scratch is an ephemeral volume; each task directory is deleted after use, even on failure.
 - Persistent volumes: postgres data and minio data. Redis is transport only and can be rebuilt from Postgres.

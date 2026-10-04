@@ -18,7 +18,7 @@ sequenceDiagram
         Worker->>FFmpeg: kill process group
         FFmpeg-->>Worker: terminated
         Worker->>PG: BEGIN
-        Worker->>PG: UPDATE tasks SET QUEUED, worker_id = NULL, lease_expires_at = NULL, dispatched_at = NULL, attempt = attempt - 1 WHERE id AND status = RUNNING
+        Worker->>PG: UPDATE tasks SET QUEUED, worker_id = NULL, lease_expires_at = NULL, dispatched_at = NULL, progress = 0, attempt = attempt - 1 WHERE id AND status = RUNNING
         Worker->>PG: UPDATE task_attempts SET finished_at, outcome = interrupted, error_message = worker shutdown
         Worker->>PG: SELECT job FOR UPDATE then recompute job status
         Worker->>PG: COMMIT

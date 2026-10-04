@@ -37,8 +37,10 @@ sequenceDiagram
     loop every 15s (lease reaper)
         Sched->>PG: SELECT RUNNING tasks with lease_expires_at before now
     end
-    alt attempts left
-        Sched->>PG: UPDATE tasks SET RETRYING, next_attempt_at WHERE id AND status = RUNNING
+    alt cancel_requested = true
+        Sched->>PG: UPDATE tasks SET CANCELED, error_code canceled WHERE id AND status = RUNNING
+    else attempts left
+        Sched->>PG: UPDATE tasks SET RETRYING, next_attempt_at, progress = 0 WHERE id AND status = RUNNING
     else out of attempts
         Sched->>PG: UPDATE tasks SET FAILED, error_code WHERE id AND status = RUNNING
     end
@@ -46,7 +48,7 @@ sequenceDiagram
     Sched->>RPubSub: PUBLISH task.status and job.status
     Note over Sched: Retry scheduler moves RETRYING to QUEUED later and the dispatcher re-dispatches. See 06-task-failure-and-retry.md and 03-dispatch-and-outbox.md
     Worker2->>PG: claim again on re-delivery (attempt + 1)
-    Worker2->>MinIO: upload output to outputs/user_id/task_id.ext (overwrites any partial earlier output)
+    Worker2->>MinIO: upload output to outputs bucket, key user_id/task_id.ext (overwrites any partial earlier output)
     end
 
     rect rgb(245, 245, 245)
@@ -63,6 +65,7 @@ sequenceDiagram
 ```
 
 ## Notes
-- The output key is deterministic (outputs/{user_id}/{task_id}.{ext}), so a rerun simply overwrites any earlier partial or complete output.
+- The output key is deterministic (bucket outputs, key {user_id}/{task_id}.{ext}), so a rerun simply overwrites any earlier partial or complete output.
 - XACK happens right after the claim because the Postgres lease is the guarantee from then on.
+- The reaper checks cancel_requested first. A worker that died mid cancel must not have its task retried.
 - The outbox relay can also cause duplicates (crash between XADD and setting published_at). The same conditional claim handles it.

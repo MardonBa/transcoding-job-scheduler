@@ -40,10 +40,12 @@ sequenceDiagram
                 Worker->>PG: Extend lease_expires_at and write progress
                 Worker->>PG: Read cancel_requested
                 PG-->>Worker: false
+                Worker->>PG: Recompute job progress from all tasks in the job
+                Worker->>RPubSub: PUBLISH job.progress to user:{user_id}:events
             end
         end
         FFmpeg-->>Worker: exit 0
-        Worker->>MinIO: PUT outputs/{user_id}/{task_id}.{ext}
+        Worker->>MinIO: PUT outputs bucket, key {user_id}/{task_id}.{ext}
         MinIO-->>Worker: ok
         rect rgb(235, 245, 255)
             Note over Worker,PG: Single transaction
@@ -53,8 +55,9 @@ sequenceDiagram
             Worker->>PG: Recompute job status
         end
         Worker->>RPubSub: PUBLISH task.status to user:{user_id}:events
-        Worker->>RPubSub: PUBLISH job.status to user:{user_id}:events
+        Worker->>RPubSub: PUBLISH job.status to user:{user_id}:events (includes task counts and progress)
         Worker->>MinIO: DELETE input object
+        Worker->>PG: SET input_deleted_at = now()
         Worker->>Worker: Delete /scratch/{task_id}/ (also runs on failure via defer)
     end
 ```

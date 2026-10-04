@@ -17,14 +17,14 @@ flowchart TD
     subgraph F["Run ffmpeg"]
         direction LR
         F1["ffmpeg in own process group with progress parsing"]
-        F2["Heartbeat every 10s: extend lease, write progress, check cancel_requested"]
+        F2["Heartbeat every 10s: extend lease, write progress, check cancel_requested, publish job.progress"]
     end
 
     F --> O{"Outcome"}
-    O -- success --> S1["Upload output to outputs/user_id/task_id.ext"]
+    O -- success --> S1["Upload output to outputs bucket, key user_id/task_id.ext"]
     S1 --> S2["Task SUCCESS and set output_expires_at"]
     S2 --> S3["Recompute job status and publish events"]
-    S3 --> S4["Delete input"]
+    S3 --> S4["Delete input and set input_deleted_at"]
     O -- "cancel_requested seen" --> C1["Kill process group"]
     C1 --> C2["Task CANCELED and recompute job"]
     O -- "task timeout" --> T1["Task FAILED, not retryable"]
@@ -44,7 +44,8 @@ flowchart TD
 
 - A crashed worker never reaches the outcome branches. The lease expires and the lease reaper moves the task to RETRYING or FAILED and writes a task_attempts row with outcome lease_expired.
 - Progress is published to redis at most once per second and written to postgres only on the heartbeat. Status changes are written to postgres first, then published.
-- The input object is deleted once the task is terminal. A RETRYING task keeps its input, since the retry needs it.
+- The input object is deleted once the task is terminal. A RETRYING task keeps its input, since the retry needs it. The worker deletes it right away on SUCCESS. For other terminal paths the cleanup loop sweeps any terminal task with input_deleted_at null, see 11-cleanup.md.
+- On each heartbeat the worker recomputes job progress from all tasks in the job and publishes job.progress. See docs/SSE.md.
 - Task timeout is max of 10 min and 3 times the input duration.
 - Graceful shutdown on SIGTERM stops reading and kills ffmpeg, then returns the task to QUEUED without counting the attempt. It is a separate path from the per-task loop, so it is drawn in 12-worker-graceful-shutdown.md instead of here.
 - The ffmpeg and heartbeat subgraph runs concurrently. The heartbeat can also stop the run when it finds cancel_requested.

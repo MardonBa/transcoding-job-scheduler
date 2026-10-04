@@ -13,7 +13,7 @@ sequenceDiagram
             Sched->>PG: SELECT QUEUED tasks with dispatched_at null
             PG-->>Sched: candidate tasks
             Sched->>Sched: Round robin across users
-            Sched->>Sched: Skip users with 2 or more tasks in flight (dispatched or running)
+            Sched->>Sched: Skip users with 2 or more tasks in flight: (QUEUED and dispatched_at set) or RUNNING
             opt At least one task selected
                 rect rgb(235, 245, 255)
                     Note over Sched,PG: Single transaction
@@ -37,6 +37,8 @@ sequenceDiagram
 ```
 
 ## Notes
+- The outbox only feeds the Redis stream, and the dispatcher is its only writer. Status events for the browser are published straight to pub/sub after commit and never go through the outbox.
+- In flight means QUEUED with dispatched_at set (waiting in the stream) or RUNNING. A task leaves that count when it reaches any terminal status, or when it goes to RETRYING or back to QUEUED with dispatched_at cleared.
 - The stream message carries only the task_id. The worker loads everything else from Postgres.
 - Writing the state change and the outbox row in one transaction means a task can never be marked dispatched without a message eventually reaching the stream.
 - If Redis is wiped, the queue can be rebuilt from Postgres (QUEUED tasks and the outbox).

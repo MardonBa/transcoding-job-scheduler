@@ -23,6 +23,7 @@ classDiagram
         +JobStatus Status
         +int TaskCount
         +string IdempotencyKey
+        +string IdempotencyRequestHash
         +time CreatedAt
         +time UpdatedAt
         +time FinishedAt
@@ -32,12 +33,14 @@ classDiagram
         +uuid ID
         +uuid JobID
         +uuid UserID
+        +int Position
         +TaskStatus Status
         +string InputKey
         +string InputFilename
         +int64 InputSizeBytes
         +json InputMetadata
         +TranscodeParams Params
+        +Notice[] Notices
         +string OutputKey
         +int64 OutputSizeBytes
         +float32 Progress
@@ -50,6 +53,8 @@ classDiagram
         +time NextAttemptAt
         +bool CancelRequested
         +time DispatchedAt
+        +time UploadExpiresAt
+        +time InputDeletedAt
         +time CreatedAt
         +time QueuedAt
         +time StartedAt
@@ -104,6 +109,12 @@ classDiagram
 
     class ErrorCode {
         <<enumeration>>
+        upload_too_large
+        unsupported_format
+        no_video_stream
+        duration_too_long
+        resolution_too_high
+        fps_too_high
         invalid_input
         unsupported_codec
         decode_error
@@ -129,8 +140,15 @@ classDiagram
 
     class Quality {
         <<value object>>
+        +string Mode
         +int CRF
         +int BitrateKbps
+    }
+
+    class Notice {
+        <<value object>>
+        +string Code
+        +string Message
     }
 
     class FFmpegCommandBuilder {
@@ -150,6 +168,7 @@ classDiagram
     Task --> TaskStatus
     Task --> ErrorCode
     Task *-- TranscodeParams : params
+    Task *-- Notice : notices
     TranscodeParams *-- Quality
     FFmpegCommandBuilder ..> TranscodeParams : reads
     ProgressParser ..> Task : feeds progress
@@ -163,8 +182,11 @@ classDiagram
         <<interface>>
         +Create(job, tasks) error
         +Get(userID, jobID) Job
-        +ListByCursor(userID, createdAt, limit) Job[]
+        +GetByIdempotencyKey(userID, key) Job
+        +ListOpen(userID) Job[]
+        +ListHistory(userID, cursor, limit) Job[]
         +RecomputeStatus(jobID) JobStatus
+        +Progress(jobID) float32
     }
 
     class TaskRepository {
@@ -177,6 +199,10 @@ classDiagram
         +ListRetryDue() Task[]
         +ListUndispatched() Task[]
         +ListOutputsExpired() Task[]
+        +ListUploadsTimedOut() Task[]
+        +ListInputsToDelete() Task[]
+        +RequestCancel(userID, taskIDs) int
+        +CountUnfinished(userID) int
         +QueuePosition(id) int
         +AddAttempt(attempt) error
     }
@@ -198,12 +224,12 @@ classDiagram
 
     class EventPublisher {
         <<interface>>
-        +Publish(userID, event) error
+        +Publish(userID, eventType, payload) error
     }
 
     class ObjectStorage {
         <<interface>>
-        +PresignPut(key, ttl) string
+        +PresignPost(key, maxBytes, expiresAt) UploadForm
         +PresignGet(key, ttl, filename) string
         +Stat(key) ObjectInfo
         +Download(key, path) error
@@ -218,7 +244,7 @@ classDiagram
 
     class SessionStore {
         <<interface>>
-        +Create(userID) string
+        +Create(userID, ttl) string
         +Get(sessionID) uuid
         +Delete(sessionID) error
     }
@@ -280,8 +306,9 @@ classDiagram
 
 ## Notes
 
-- Loop intervals: OutboxRelay ~500ms, Dispatcher 1s, LeaseReaper 15s, RetryScheduler 5s, CleanupLoop 1h. SSEHub holds one PSUBSCRIBE user:*:events per api instance.
+- Loop intervals: OutboxRelay ~500ms, Dispatcher 1s, LeaseReaper 15s, RetryScheduler 5s, CleanupLoop 5 min. SSEHub holds one PSUBSCRIBE user:*:events per api instance.
 - Enum and interface method sets are illustrative; they follow the behaviors in the notes, not a prescribed Go API.
-- ErrorCode values match the Statuses section of the notes. Retryable: lease_expired, oom_or_signal, storage_error. Not retryable: invalid_input, unsupported_codec, decode_error, timeout, canceled.
+- ErrorCode values match docs/API.md. Retryable: lease_expired, oom_or_signal, storage_error. Everything else is not retryable.
+- ObjectStorage has an internal and a public implementation. Presigned forms and URLs for the browser are signed with the public endpoint, see docs/NGINX.md.
 - The Worker and API do not call each other; both talk only through Postgres and Redis.
 - Dispatcher and the transition methods use conditional updates (UPDATE ... WHERE status = expected).

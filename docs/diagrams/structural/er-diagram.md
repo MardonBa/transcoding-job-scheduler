@@ -26,6 +26,7 @@ erDiagram
         job_status status
         int task_count
         text idempotency_key "UK with user_id"
+        text idempotency_request_hash "sha256 of request body"
         timestamptz created_at
         timestamptz updated_at
         timestamptz finished_at
@@ -35,12 +36,14 @@ erDiagram
         uuid id PK
         uuid job_id FK
         uuid user_id FK
+        int position "order within the job"
         task_status status
         text input_key
         text input_filename
         bigint input_size_bytes
         jsonb input_metadata
-        jsonb params
+        jsonb params "effective params"
+        jsonb notices "default empty array"
         text output_key "nullable"
         bigint output_size_bytes "nullable"
         real progress "0 to 100"
@@ -53,6 +56,8 @@ erDiagram
         timestamptz next_attempt_at "nullable"
         bool cancel_requested "default false"
         timestamptz dispatched_at "nullable"
+        timestamptz upload_expires_at
+        timestamptz input_deleted_at "nullable"
         timestamptz created_at
         timestamptz queued_at
         timestamptz started_at
@@ -83,19 +88,24 @@ erDiagram
 
 ## Notes
 
-- Unique constraints: users.google_sub; jobs (user_id, idempotency_key).
+- Unique constraints: users.google_sub; jobs (user_id, idempotency_key); tasks (job_id, position).
+- Primary keys of users, jobs and tasks are UUIDv7, generated in Go.
 - task_attempts.outcome values: success, retryable_error, fatal_error, lease_expired, canceled, interrupted.
 - Indexes:
-  - jobs (user_id, created_at desc) for dashboard and pagination
+  - jobs (user_id, created_at desc, id desc) for dashboard and cursor pagination
   - tasks (job_id)
   - tasks (user_id, status) for per-user limits
   - tasks (status, lease_expires_at) where status = RUNNING, for the reaper
   - tasks (status, next_attempt_at) where status = RETRYING
   - tasks (status, queued_at) where status = QUEUED, for dispatch and queue position
   - tasks (output_expires_at) where status = SUCCESS, for cleanup
+  - tasks (upload_expires_at) where status = PENDING_UPLOAD, for cleanup
+  - tasks (finished_at) where input_deleted_at is null, for the input sweep
   - outbox (id) where published_at is null
 - job_status enum: PENDING_UPLOAD, QUEUED, RUNNING, SUCCESS, PARTIAL_SUCCESS, FAILED, CANCELED, EXPIRED
 - task_status enum: PENDING_UPLOAD, QUEUED, RUNNING, RETRYING, SUCCESS, FAILED, CANCELED, EXPIRED
 - Job status is derived from its tasks, never set directly.
 - Sessions are stored in Redis, not Postgres, so there is no sessions table.
-- Outbox rows are written in the same transaction as the state change; the relay publishes them to Redis.
+- Outbox rows are written only by the dispatcher, in the same transaction as setting dispatched_at. The relay XADDs them to the Redis stream. Browser status events do not use the outbox.
+- notices holds entries like {code: resolution_clamped, message}. params holds the effective values after clamping.
+- task_attempts.ffmpeg_stderr_tail is never exposed through the API.

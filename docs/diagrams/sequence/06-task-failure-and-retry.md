@@ -16,7 +16,7 @@ sequenceDiagram
 
     alt retryable error and attempt < max_attempts (3)
         Worker->>PG: BEGIN
-        Worker->>PG: UPDATE tasks SET status RETRYING, next_attempt_at = now + backoff (10s/30s/90s + jitter), clear worker_id and lease WHERE id AND status = RUNNING
+        Worker->>PG: UPDATE tasks SET status RETRYING, next_attempt_at = now + backoff (10s/30s/90s + jitter), progress = 0, error_code, error_message, clear worker_id and lease WHERE id AND status = RUNNING
         Worker->>PG: UPDATE task_attempts SET finished_at, outcome = retryable_error, error_message, ffmpeg_stderr_tail
         Worker->>PG: recompute job status (SELECT FOR UPDATE on job row)
         Worker->>PG: COMMIT
@@ -43,4 +43,7 @@ sequenceDiagram
 ## Notes
 - Retryable codes: lease expired, ffmpeg killed by signal or OOM, MinIO or Postgres timeouts. Not retryable: invalid or corrupt input, unsupported codec, decode error, timeout, canceled.
 - Status changes are written to Postgres first, then published. Pub/sub is fire and forget.
+- While RETRYING, the task's error shows the last attempt's error with retryable = true, and next_attempt_at lets the UI show a countdown.
+- Resetting progress to 0 can move job progress backwards. The frontend tween handles that.
+- RETRYING -> QUEUED leaves job status as RUNNING, because the job has already started (see job-status-derivation.md).
 - The input object is kept while retries are possible and deleted once the task is terminal.

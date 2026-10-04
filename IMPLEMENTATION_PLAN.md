@@ -1,43 +1,48 @@
 # Implementation Plan
 
 Build order: get a thin end-to-end slice working first (Phase 1), then layer on reliability, fairness, and observability.
-Design details live in [docs/IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.md). Diagrams live in [docs/diagrams/](docs/diagrams/).
+Design details live in [docs/IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.md). Contracts: [API](docs/API.md), [SSE](docs/SSE.md), [OAuth](docs/OAUTH.md), [nginx](docs/NGINX.md). Diagrams live in [docs/diagrams/](docs/diagrams/).
 
 ## Phase 0: Design
 
-- [ ] UML diagrams (ER, class, component, deployment, state machines, sequences)
-- [ ] Review diagrams against implementation notes, resolve any gaps
-- [ ] Finalize API routes and request/response shapes
-- [ ] Finalize SSE event payloads
+- [x] UML diagrams (ER, class, component, deployment, state machines, sequences)
+- [x] Review diagrams against implementation notes, resolve any gaps
+- [x] Finalize API routes and request/response shapes
+- [x] Finalize SSE event payloads
+- [x] OAuth flow and nginx setup
 
 ## Phase 1: End-to-End Slice
 
 Goal: login -> upload one video -> worker transcodes -> status over SSE -> download. Fixed concurrency, no retries yet.
 
 ### Infrastructure & Project Setup
-- [ ] Docker compose: postgres, redis, minio (+ bucket init), api, worker, scheduler, frontend
+- [ ] Docker compose: nginx, postgres, redis, minio (+ bucket init), api, worker, scheduler, frontend
+- [ ] nginx config (`deploy/nginx/nginx.conf`): /api, /api/events, /uploads + /outputs, frontend
 - [ ] Go module layout: `cmd/api`, `cmd/worker`, `cmd/scheduler`, shared `internal/` packages
 - [ ] Config via env vars
 - [ ] Migrations tool + initial migrations (users, jobs, tasks, task_attempts, outbox, enums, indexes)
-- [ ] Postgres, redis, minio clients
+- [ ] Postgres, redis, minio clients (internal + public minio client for signing)
 - [ ] Structured logging with slog from day one
+- [ ] Shared JSON error envelope + request id middleware
+- [ ] Origin check on POST requests
 
 ### Auth
-- [ ] Google OIDC login + callback in the api
+- [ ] `GET /api/auth/login` + `GET /api/auth/callback`: PKCE, state (Redis + cookie), nonce
 - [ ] Verify id_token, upsert user on google_sub
-- [ ] Redis sessions with 7 day TTL, httpOnly/Secure/SameSite=Lax cookie
-- [ ] Auth middleware, `GET /me`, logout
+- [ ] Redis sessions (hashed id) with 7 day TTL, httpOnly/SameSite=Lax cookie, Secure via env
+- [ ] Auth middleware, `GET /api/me`, `POST /api/auth/logout`
 - [ ] All job/task queries scoped by user_id, 404 for other users' resources
 
 ### Job Creation & Uploads
 - [ ] Transcode params typed struct + allowlist validation
-- [ ] `POST /jobs`: validate, write job + tasks (PENDING_UPLOAD) in one transaction, return presigned PUT urls
-- [ ] Idempotency key on job creation
-- [ ] `POST /tasks/{id}/uploaded`: StatObject size check, ffprobe via presigned GET, store input_metadata, move to QUEUED
-- [ ] `GET /jobs` (paginated), `GET /jobs/{id}`
+- [ ] `GET /api/config`: options, presets, limits from the same Go values
+- [ ] `POST /api/jobs`: validate, write job + tasks (PENDING_UPLOAD) in one transaction, return presigned POST forms (30 min window)
+- [ ] `Idempotency-Key` header with request hash, 422 on mismatched reuse
+- [ ] `POST /api/tasks/{id}/uploaded`: StatObject size check, ffprobe via presigned GET, store input_metadata + notices, move to QUEUED or FAILED
+- [ ] `GET /api/jobs?scope=open|history` (cursor on created_at, id), `GET /api/jobs/{id}`
 
 ### Queue (basic)
-- [ ] Outbox writes in the same transaction as state changes
+- [ ] Dispatcher-style outbox write in the same transaction as setting dispatched_at (only writer of the outbox)
 - [ ] Outbox relay loop in the scheduler: outbox -> XADD -> published_at
 - [ ] Redis stream + consumer group setup
 - [ ] Worker XREADGROUP, conditional claim in postgres, XACK
@@ -51,22 +56,23 @@ Goal: login -> upload one video -> worker transcodes -> status over SSE -> downl
 - [ ] Mark SUCCESS, set output_expires_at, recompute job status with row lock
 
 ### Progress & SSE
-- [ ] Worker publishes events to `user:{user_id}:events` (throttled to 1/s)
+- [ ] Worker publishes events to `user:{user_id}:events` (task.progress throttled to 1/s, job.progress on heartbeat)
 - [ ] Api single PSUBSCRIBE + in-memory fan-out to user connections
-- [ ] `GET /events` SSE endpoint with 15s keepalive
+- [ ] `GET /api/events` SSE endpoint: ready event, 15s keepalive with session recheck
 
 ### Downloads
-- [ ] `GET /tasks/{id}/download`: ownership check -> redirect to presigned GET with Content-Disposition
+- [ ] `GET /api/tasks/{id}/download`: ownership check -> redirect to presigned GET with Content-Disposition
 
 ### Frontend
 - [ ] Landing page with login
-- [ ] Auth check via `/me`, route guarding
+- [ ] Auth check via `/api/me`, route guarding, `auth_error` message on landing
 - [ ] Dashboard layout (side by side, stacks on small screens)
-- [ ] Job adder form: drag and drop + file picker, job name, presets per video
-- [ ] Direct upload to minio with per-video progress, then confirm upload
+- [ ] Job adder form built from `/api/config`: drag and drop + file picker, job name, presets per video
+- [ ] Direct upload to minio (presigned POST via XHR) with per-video progress, then confirm upload
 - [ ] Job cards in active / queued / previous collapsible sections
 - [ ] Job page: per-video status, progress, download links, expiry
-- [ ] SSE hook that updates job/task state, refetch on reconnect
+- [ ] SSE context shared across pages: refetch on `ready`, drop stale events by `ts`/attempt, manual backoff on 401/429
+- [ ] Job progress tween between server updates
 
 ## Phase 2: Reliability
 
@@ -85,20 +91,20 @@ Goal: login -> upload one video -> worker transcodes -> status over SSE -> downl
 ## Phase 3: Fairness & Limits
 
 - [ ] Dispatcher loop: round robin across users, max 2 in-flight tasks per user, dispatched_at
-- [ ] Queue position computation + frontend display
+- [ ] `queue_ahead` computation + frontend display ("~N ahead"), 10s poll while queued
 - [ ] Redis token bucket (lua) rate limit middleware with Retry-After
-- [ ] Limits: general api, job creation, videos per job, queued tasks per user, SSE connections per user
+- [ ] Limits: general api, public per-IP, job creation, videos per job, unfinished tasks per user, SSE connections per user
 - [ ] Frontend handling for 429s
 - [ ] Docker cpu/memory limits on worker containers
 
 ## Phase 4: Cancellation & Cleanup
 
-- [ ] `POST /jobs/{id}/cancel`: queued/retrying -> CANCELED, running -> cancel_requested
-- [ ] Worker kills ffmpeg on cancel flag -> CANCELED
-- [ ] Cleanup loop: expire outputs -> EXPIRED, fail stale PENDING_UPLOAD tasks
-- [ ] Delete inputs once tasks are terminal
-- [ ] MinIO lifecycle rule on uploads bucket as a backstop
-- [ ] Frontend: cancel button, EXPIRED state, error messages
+- [ ] `POST /api/jobs/{id}/cancel` and `POST /api/tasks/{id}/cancel`: pending upload/queued/retrying -> CANCELED, running -> cancel_requested, 202 with job
+- [ ] Worker kills ffmpeg on cancel flag -> CANCELED; reaper cancels instead of retrying when cancel_requested is set
+- [ ] Cleanup loop (every 5 min): expire outputs -> EXPIRED, fail PENDING_UPLOAD past window + 15 min
+- [ ] Input sweep: delete inputs of terminal tasks once no upload can land, set input_deleted_at
+- [ ] MinIO lifecycle rule on uploads bucket (1 day) as a backstop
+- [ ] Frontend: job + per-video cancel buttons, "Canceling…" state, EXPIRED state, error messages
 
 ## Phase 5: Hardening
 
