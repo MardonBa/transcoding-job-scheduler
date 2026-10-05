@@ -16,12 +16,13 @@ Design details live in [docs/IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.
 Goal: login -> upload one video -> worker transcodes -> status over SSE -> download. Fixed concurrency, no retries yet.
 
 ### Infrastructure & Project Setup
-- [ ] Docker compose: nginx, postgres, redis, minio (+ bucket init), api, worker, scheduler, frontend
-- [ ] nginx config (`deploy/nginx/nginx.conf`): /api, /api/events, /uploads + /outputs, frontend
+- [x] Docker compose (backing services): postgres, redis, minio (+ bucket init), with healthchecks
 - [ ] Go module layout: `cmd/api`, `cmd/worker`, `cmd/scheduler`, shared `internal/` packages
 - [ ] Config via env vars
 - [ ] Migrations tool + initial migrations (users, jobs, tasks, task_attempts, outbox, enums, indexes)
-- [ ] Postgres, redis, minio clients (internal + public minio client for signing)
+- [ ] Postgres, redis, minio clients (internal + public minio client for signing), run from host against compose
+- [ ] Dockerfiles for api, worker, scheduler, frontend; add them to compose (behind a profile so `docker compose up` stays infra-only)
+- [ ] nginx config (`deploy/nginx/nginx.conf`): /api, /api/events, /uploads + /outputs, frontend; add nginx to compose
 - [ ] Structured logging with slog from day one
 - [ ] Shared JSON error envelope + request id middleware
 - [ ] Origin check on POST requests
