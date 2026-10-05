@@ -17,8 +17,8 @@ Goal: login -> upload one video -> worker transcodes -> status over SSE -> downl
 
 ### Infrastructure & Project Setup
 - [x] Docker compose (backing services): postgres, redis, minio (+ bucket init), with healthchecks
-- [ ] Go module layout: `cmd/api`, `cmd/worker`, `cmd/scheduler`, shared `internal/` packages
-- [ ] Config via env vars
+- [x] Go module in `backend/`: `cmd/api`, `cmd/worker`, `cmd/scheduler`, shared `internal/` packages
+- [x] Config via env vars
 - [ ] Migrations tool + initial migrations (users, jobs, tasks, task_attempts, outbox, enums, indexes)
 - [ ] Postgres, redis, minio clients (internal + public minio client for signing), run from host against compose
 - [ ] Dockerfiles for api, worker, scheduler, frontend; add them to compose (behind a profile so `docker compose up` stays infra-only)
